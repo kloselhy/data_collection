@@ -29,7 +29,7 @@ var (
 	minTop = make([]minGroup, clientNums)      //save minGroup for each client
 	haveData = make([]bool, clientNums)        //save the status for each client, true means this client still have data to process
 	groupMinIndex = make([]int, clientNums)    //save the min's index for each minGroup
-	debug = true                              //debug switch
+	debug = false                              //debug switch
 )
 
 type data struct {
