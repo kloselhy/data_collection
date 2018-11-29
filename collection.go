@@ -57,7 +57,6 @@ func init() {
 	for i := 0; i < clientNums; i++ {
 		dataStreaming[i] = make(chan data, messageNums)
 	}
-
 }
 
 /* 1. please implement collect code
