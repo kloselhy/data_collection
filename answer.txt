@@ -2,9 +2,9 @@ Every channel's data are not strictly sorted due to multi-thread.
 Some data may be generated earlier but put into channel later. And prepare data must be earlier than its commit data.
 
 So if we get data from one channel and count the prepare data and commit data.
-When the number of prepare data equals the number of commit data, it means the completed pairs of data are received, and they are all earlier than the following data.
+When the number of prepare data equals the number of commit data, it means the completed pairs of data are received, and they are all earlier than the following commit data(prepare data is not sure).
 
-We can gather the commit data, and name them minGroup. all data in minGroup are earlier than the data still in channel.
+We can gather the commit data, and name them minGroup. all data in minGroup are earlier than the commit data still in channel.
 Each time we compare every channel's minGroup(just like merge multiple sorted list),and print the min data.
 when one minGroup is empty, get new data from channel in order to prevent mistakes.
 The program is end when every channel has no data.
