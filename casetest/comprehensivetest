@@ -311,7 +311,7 @@ func collect() {
 		fmt.Println("loseonlyPcnt",loseonlyPcnt)
 		fmt.Println("loseonlyCcnt",loseonlyCcnt)
 		fmt.Println("losepaircnt",losepaircnt)
-		fmt.Println("because of some timeout data may output, \ncorrect system should match: count+timeoutonlyPcnt+timeoutonlyCcnt+timeoutpaircnt+loseonlyPcnt+loseonlyCcnt+losepaircnt > allcount\n and count<allcount")
+		fmt.Println("because of some timeout data may output, \ncorrect system should match: count+timeoutonlyPcnt+timeoutonlyCcnt+timeoutpaircnt+loseonlyPcnt+loseonlyCcnt+losepaircnt > allcount\n and count<=allcount")
 	}
 	wg2.Wait()
 }
