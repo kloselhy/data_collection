@@ -196,13 +196,16 @@ func getGroup(index int){
 				delete(Pmapnew,prepare)
 			}
 			if vc,ok :=Cmap[prepare];ok{
-				Cslice=append(Cslice,vc)
+				if vc.commit>Cmaxlast{
+					Cslice=append(Cslice,vc)
+				}
 				delete(Pmapnew,prepare)
 			}
 		}
 		for prepare,vc:= range Cmapnew{
-			if prepare<Cmaxlast{
+			if vc.commit<Cmaxlast{
 				delete(Cmapnew,prepare)
+				continue
 		    	}
 			if _,ok :=Pmap[prepare];ok{
 				if vc.commit<Cmax{
