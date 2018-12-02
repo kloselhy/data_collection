@@ -175,6 +175,7 @@ func getGroup(index int){
 				if vp,ok:=Pmapnew[v.prepare];ok{
 					delete(Pmapnew,v.prepare)
 					if vp.prepare<Pmaxlast || v.commit<Cmaxlast{
+						//timeout
 						continue
 					}
 					if v.commit<Cmax{
@@ -190,6 +191,7 @@ func getGroup(index int){
         	}
 		for prepare:= range Pmapnew{
 			if prepare<Pmaxlast{
+				//timeout
 				delete(Pmapnew,prepare)
 			}
 			if vc,ok :=Cmap[prepare];ok{
@@ -201,6 +203,7 @@ func getGroup(index int){
 		}
 		for prepare,vc:= range Cmapnew{
 			if vc.commit<Cmaxlast{
+				//timeout
 				delete(Cmapnew,prepare)
 				continue
 		    	}
