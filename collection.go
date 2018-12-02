@@ -5,8 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"fmt"      //add for output
-	"sort"      //add for sort slice
+	"fmt"
+	"sort"
 )
 
 var (
@@ -26,9 +26,12 @@ var (
 	wg sync.WaitGroup
 
 	//add for answer
-	minTop = make([]minGroup, clientNums)      //save minGroup for each client
+	tMax = time.Duration(4*maxSleepInterval)*time.Millisecond       //time threshold for sending
+	minGroupStreaming []chan minGroup          //every channel's mingGroup channel,new minGroup will send to it
+	minTop = make([]minGroup, clientNums)      //save minGroup for each client for multi-channel join
 	haveData = make([]bool, clientNums)        //save the status for each client, true means this client still have data to process
 	groupMinIndex = make([]int, clientNums)    //save the min's index for each minGroup
+	wg2 sync.WaitGroup                         //a new lock for collector
 	debug = false                              //debug switch
 )
 
@@ -38,24 +41,31 @@ type data struct {
 	commit  int64
 }
 
+type dataGroup []data
+
 /* 
  * definition of type minGroup, and function about sort
  */
-type minGroup []data
+type minGroup dataGroup
 func (g minGroup) Len() int {
-        return len(g)
+	return len(g)
 }
 func (g minGroup) Less(i, j int) bool {
-        return g[i].commit < g[j].commit
+	return g[i].commit < g[j].commit
 }
 func (g minGroup) Swap(i, j int) {
-        g[i], g[j] = g[j], g[i]
+	g[i], g[j] = g[j], g[i]
 }
 
 func init() {
 	dataStreaming = make([]chan data, clientNums)
 	for i := 0; i < clientNums; i++ {
 		dataStreaming[i] = make(chan data, messageNums)
+	}
+	//add for answer
+	minGroupStreaming = make([]chan minGroup, clientNums)
+	for i := 0; i < clientNums; i++ {
+		minGroupStreaming[i] = make(chan minGroup, messageNums/2)
 	}
 }
 
@@ -85,50 +95,137 @@ func main() {
 	wg.Wait()
 }
 
-/* function to get data from the appointed channel(with enough timeout)
- * timeout means the channel has no data(in reality,it means the data source exit or dead)
+/* 
+ * function to get data from the appointed channel in tMax
  */
-func getcommitdata(index int)(data,bool){
-	timeout:=false
+func getDataInT(index int)(dataGroup){
+	timeOut := time.After(tMax)
+	var tmpGroup dataGroup
 	var v1 data
-	select{
-		case v1=<-dataStreaming[index]:
+	needquit:=false
+	for{
+		select{
+			case v1=<-dataStreaming[index]:
+				tmpGroup=append(tmpGroup,v1)
+				break
+			case <-timeOut:
+				needquit=true
+				break
+		}
+		if needquit{
 			break
-		case <-time.After(time.Duration(20*maxSleepInterval)*time.Millisecond):
-			timeout=true
+		}
+		select{
+           		case <-timeOut:
+				needquit=true
+            			break
+            		default:
+            			break
+	    	}
+	   	if needquit{
 			break
+		}
 	}
-	return v1,timeout
+	return tmpGroup
 }
 
-/* function to get minGroup from the appointed channel, the minGroup only contains commit data and is already sorted.
- * because of multi-thread, each channel's data is not strictly sorted
- * but when the prepare and the commit data pair up, all of them(form a group) are definitely less than the following data (in the same channel)
+/* 
+ * function to generate minGroup from the appointed channel continuesly.
+ * the minGroup only contains commit data and is already sorted.
  */
-func getgroup(index int)(minGroup){
-	timeout:=false
-	var v1 data
-	var tmpgroup minGroup
-	preparecnt:=0
-	commitcnt:=0
+func getGroup(index int){
+	var Cslice minGroup
+	Pmap := make(map[int64]data)
+    	Cmap := make(map[int64]data)
+	
+	var Cmaxlast int64=-9223372036854775808
+	var Pmaxlast int64=-9223372036854775808
+	var Cmax int64=-9223372036854775808
+	var Pmax int64=-9223372036854775808
+
+	noresult:=0
 	for{
-		v1,timeout=getcommitdata(index)
-		if timeout{
-			break
-		}
-		if v1.kind=="prepare"{
-			preparecnt++
+		tmpgroup:=getDataInT(index)
+		if len(tmpgroup)==0{
+			noresult++
+			if noresult>10 {
+				break
+			}
 		}else{
-			commitcnt++
-			tmpgroup=append(tmpgroup,v1)
+			noresult=0
 		}
-		if preparecnt==commitcnt{
-			break
+		var tmpPmax int64=Pmax
+		var tmpCmax int64=Cmax
+		var Cslicenew minGroup
+		Pmapnew := make(map[int64]data)
+        	Cmapnew := make(map[int64]data)
+		for _,v := range tmpgroup{
+			if v.kind=="prepare"{
+				Pmapnew[v.prepare]=v
+				if v.prepare>tmpPmax{
+					tmpPmax=v.prepare
+				}
+			}
 		}
+		for _,v := range tmpgroup{
+			if v.kind=="commit"{
+				if v.commit>tmpCmax{
+					tmpCmax=v.commit
+				}
+				if vp,ok:=Pmapnew[v.prepare];ok{
+					delete(Pmapnew,v.prepare)
+					if vp.prepare<Pmaxlast || v.commit<Cmaxlast{
+						continue
+					}
+					if v.commit<Cmax{
+						Cslice=append(Cslice,v)
+					}else{
+						Cslicenew=append(Cslicenew,v)
+					}
+
+				}else{
+					Cmapnew[v.prepare]=v
+				}
+			}
+        	}
+		for prepare:= range Pmapnew{
+			if prepare<Pmaxlast{
+				delete(Pmapnew,prepare)
+			}
+			if vc,ok :=Cmap[prepare];ok{
+				Cslice=append(Cslice,vc)
+				delete(Pmapnew,prepare)
+			}
+		}
+		for prepare,vc:= range Cmapnew{
+			if prepare<Cmaxlast{
+				delete(Cmapnew,prepare)
+		    	}
+			if _,ok :=Pmap[prepare];ok{
+				if vc.commit<Cmax{
+					Cslice=append(Cslice,vc)
+				}else{
+					Cslicenew=append(Cslicenew,vc)
+				}	
+				delete(Cmapnew,prepare)
+			}
+       		}
+		if len(Cslice)>0{
+			sort.Sort(Cslice)
+			tmpslice:=Cslice
+			minGroupStreaming[index]<-tmpslice
+		}
+		Cslice=Cslicenew
+		Pmap=Pmapnew
+		Cmap=Cmapnew
+		Pmaxlast=Pmax
+		Cmaxlast=Cmax
+		Pmax=tmpPmax
+		Cmax=tmpCmax
 	}
-	//return a sorted minGroup
-	sort.Sort(tmpgroup)
-	return tmpgroup
+	if debug{
+		fmt.Println("quit getgroup:",index)
+	}
 }
 /*
  * 1 assume dataStreamings are endless => we have infinitely many datas;
@@ -137,85 +234,70 @@ func getgroup(index int)(minGroup){
  * and output them in the fastest way you can think
  */
 func collect() {
+	wg2.Add(clientNums)
+	for i := 0; i < clientNums; i++ {
+		go func(index int) {
+		    defer wg2.Done()
+		    getGroup(index)
+		}(i)
+	}
 	count:=0
 	//get every channel's first minGroup
 	for i := 0; i < clientNums; i++ {
-		tmpgroup:=getgroup(i)
-		if len(tmpgroup)== 0{
-			haveData[i]=false
-			continue
-		}else{
-			haveData[i]=true
-			groupMinIndex[i]=0
-		}
-		minTop[i]=tmpgroup;
+		select{
+           		case minTop[i]=<-minGroupStreaming[i]:
+				groupMinIndex[i]=0
+				haveData[i]=true
+                		break
+            		case <-time.After(tMax*20):
+                		haveData[i]=false
+                		break
+        	}
 	}
 
 	var lastOutput int64=0
 	//start processing
 	for{
-		for{
-			var minValue int64=9223372036854775807
-			clientMinIndex:=-1
-			for i:=0;i<clientNums;i++{
-				if haveData[i]==false{
-					continue
-				}
-				if minTop[i][groupMinIndex[i]].commit<=minValue{
-					minValue=minTop[i][groupMinIndex[i]].commit
-					clientMinIndex=i
-				}
-			}
-			if clientMinIndex!=-1{
-				if minValue<lastOutput && debug{
-					fmt.Println("==========================Attention->ERROR==============================")
-				}
-				fmt.Println(minTop[clientMinIndex][groupMinIndex[clientMinIndex]])
-				lastOutput=minValue
-				count++
-				groupMinIndex[clientMinIndex]++
-				if(groupMinIndex[clientMinIndex]>=len(minTop[clientMinIndex])){
-					//one channel's data run out, need get new data
-					break
-				}
-				
-			}else{
-				//no min:return
-				break
-			}
-		}
-		stillok:=false
-		for i := 0; i < clientNums; i++ {
+		var minValue int64=9223372036854775807
+		clientMinIndex:=-1
+		for i:=0;i<clientNums;i++{
 			if haveData[i]==false{
 				continue
 			}
-			
-			//remove data already output
-			minTop[i]=append([]data{},minTop[i][groupMinIndex[i]:]...)
-			groupMinIndex[i]=0
-
-			//get new data
-			tmpgroup:=getgroup(i)
-			minTop[i]=append(minTop[i],tmpgroup...)
-			if len(minTop[i])==0{
-				haveData[i]=false
-				if debug{
-					fmt.Println("client have no data, client index:",i)
-				}
-				continue
+			if minTop[i][groupMinIndex[i]].commit<=minValue{
+				minValue=minTop[i][groupMinIndex[i]].commit
+				clientMinIndex=i
 			}
-			/*if debug{
-				fmt.Println(i,":",minTop[i])
-			}*/
-			stillok=true
 		}
-		if stillok==false{
+		if clientMinIndex!=-1{
+			if minValue<lastOutput && debug{
+				fmt.Println("==========================Attention->ERROR==============================")
+			}
+			fmt.Println(minTop[clientMinIndex][groupMinIndex[clientMinIndex]])
+			lastOutput=minValue
+			count++
+			groupMinIndex[clientMinIndex]++
+			if(groupMinIndex[clientMinIndex]>=len(minTop[clientMinIndex])){
+				//one channel's data run out, need get new data
+				select{
+					case minTop[clientMinIndex]=<-minGroupStreaming[clientMinIndex]:
+						groupMinIndex[clientMinIndex]=0
+						break
+					case <-time.After(tMax*20):
+						haveData[clientMinIndex]=false
+						break
+               			}					
+			}
+				
+		}else{
+			//no min
 			break
 		}
 	}
 	if debug{
 		fmt.Println("count:",count)
 	}
+	wg2.Wait()
 }
 
 /*
