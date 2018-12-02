@@ -305,13 +305,13 @@ func collect() {
 		fmt.Println("timeoutonlyPcnt",timeoutonlyPcnt)
 		fmt.Println("timeoutonlyCcnt",timeoutonlyCcnt)
 		fmt.Println("timeoutpaircnt",timeoutpaircnt)
-		fmt.Println("correct system should match: count+timeoutonlyPcnt+timeoutonlyCcnt+timeoutpaircnt = allcount")
+		fmt.Println("correct system should match: count+timeoutonlyPcnt+timeoutonlyCcnt+timeoutpaircnt > allcount")
 	}
 	wg2.Wait()
 }
 
 func putDataAfterT(message data,index int){
-	time.Sleep(4*tMax)
+	time.Sleep(tMax)
 	sleep(maxSleepInterval)
 	dataStreaming[index]<-message
 }
